@@ -1,0 +1,13 @@
+service: youtubeStudySpace
+
+provider:
+  name: aws
+  region: ap-northeast-1
+  runtime: go1.x
+  timeout: 60
+
+functions:
+  roomsState:
+    handler: rooms_state
+    name: rooms_state
+
