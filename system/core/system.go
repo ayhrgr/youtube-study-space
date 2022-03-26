@@ -4,8 +4,10 @@ import (
 	"app.modules/core/customerror"
 	"app.modules/core/discordbot"
 	"app.modules/core/guardians"
+	"app.modules/core/mybigquery"
 	"app.modules/core/myfirestore"
 	"app.modules/core/mylinebot"
+	"app.modules/core/mystorage"
 	"app.modules/core/utils"
 	"app.modules/core/youtubebot"
 	"cloud.google.com/go/firestore"
@@ -62,20 +64,25 @@ func NewSystem(ctx context.Context, clientOption option.ClientOption) (System, e
 	}
 	
 	constants := SystemConstants{
-		FirestoreController:             fsController,
-		liveChatBot:                     liveChatBot,
-		lineBot:                         lineBot,
-		discordBot:                      discordBot,
-		LiveChatBotChannelId:            credentialsDoc.YoutubeBotChannelId,
-		MaxWorkTimeMin:                  constantsConfig.MaxWorkTimeMin,
-		MinWorkTimeMin:                  constantsConfig.MinWorkTimeMin,
-		DefaultWorkTimeMin:              constantsConfig.DefaultWorkTimeMin,
-		MinBreakDurationMin:             constantsConfig.MinBreakDurationMin,
-		MaxBreakDurationMin:             constantsConfig.MaxBreakDurationMin,
-		MinBreakIntervalMin:             constantsConfig.MinBreakIntervalMin,
-		DefaultBreakDurationMin:         constantsConfig.DefaultBreakDurationMin,
-		DefaultSleepIntervalMilli:       constantsConfig.SleepIntervalMilli,
-		CheckDesiredMaxSeatsIntervalSec: constantsConfig.CheckDesiredMaxSeatsIntervalSec,
+		FirestoreController:                 fsController,
+		liveChatBot:                         liveChatBot,
+		lineBot:                             lineBot,
+		discordBot:                          discordBot,
+		LiveChatBotChannelId:                credentialsDoc.YoutubeBotChannelId,
+		MaxWorkTimeMin:                      constantsConfig.MaxWorkTimeMin,
+		MinWorkTimeMin:                      constantsConfig.MinWorkTimeMin,
+		DefaultWorkTimeMin:                  constantsConfig.DefaultWorkTimeMin,
+		MinBreakDurationMin:                 constantsConfig.MinBreakDurationMin,
+		MaxBreakDurationMin:                 constantsConfig.MaxBreakDurationMin,
+		MinBreakIntervalMin:                 constantsConfig.MinBreakIntervalMin,
+		DefaultBreakDurationMin:             constantsConfig.DefaultBreakDurationMin,
+		DefaultSleepIntervalMilli:           constantsConfig.SleepIntervalMilli,
+		CheckDesiredMaxSeatsIntervalSec:     constantsConfig.CheckDesiredMaxSeatsIntervalSec,
+		LastResetDailyTotalStudySec:         constantsConfig.LastResetDailyTotalStudySec,
+		LastTransferLiveChatHistoryBigquery: constantsConfig.LastTransferLiveChatHistoryBigquery,
+		GcpRegion:                           constantsConfig.GcpRegion,
+		GcsFirestoreExportBucketName:        constantsConfig.GcsFirestoreExportBucketName,
+		LiveChatHistoryRetentionDays:        constantsConfig.LiveChatHistoryRetentionDays,
 	}
 	
 	// 全ての項目が初期化できているか確認
@@ -270,7 +277,7 @@ func (s *System) Command(commandString string, userId string, userDisplayName st
 		}
 		return customerror.NewNil()
 	default:
-		_ = s.Constants.lineBot.SendMessage("Unknown command: " + commandString)
+		_ = s.MessageToLineBot("Unknown command: " + commandString)
 	}
 	return customerror.NewNil()
 }
@@ -727,65 +734,19 @@ func (s *System) ParseChangeOptions(commandSlice []string) ([]ChangeOption, cust
 	return options, customerror.NewNil()
 }
 
-// ParseMore TODO: ParseMinOptionにする
 func (s *System) ParseMore(commandString string) (CommandDetails, customerror.CustomError) {
 	slice := strings.Split(commandString, HalfWidthSpace)
 	
-	// 指定時間
-	var workTimeMin int
-	if len(slice) >= 2 {
-		if strings.HasPrefix(slice[1], TimeOptionPrefix) {
-			num, err := strconv.Atoi(strings.TrimPrefix(slice[1], TimeOptionPrefix))
-			if err != nil { // 無効な値
-				return CommandDetails{}, customerror.InvalidCommand.New("「" + TimeOptionPrefix + "」の後の値を確認してください")
-			}
-			if s.Constants.MinWorkTimeMin <= num && num <= s.Constants.MaxWorkTimeMin {
-				workTimeMin = num
-			} else { // 無効な値
-				return CommandDetails{}, customerror.InvalidCommand.New("延長時間（分）は" + strconv.Itoa(s.Constants.MinWorkTimeMin) + "～" + strconv.Itoa(s.Constants.MaxWorkTimeMin) + "の値にしてください")
-			}
-		} else if strings.HasPrefix(slice[1], TimeOptionShortPrefix) {
-			num, err := strconv.Atoi(strings.TrimPrefix(slice[1], TimeOptionShortPrefix))
-			if err != nil { // 無効な値
-				return CommandDetails{}, customerror.InvalidCommand.New("「" + TimeOptionShortPrefix + "」の後の値を確認してください")
-			}
-			if s.Constants.MinWorkTimeMin <= num && num <= s.Constants.MaxWorkTimeMin {
-				workTimeMin = num
-			} else { // 無効な値
-				return CommandDetails{}, customerror.InvalidCommand.New("延長時間（分）は" + strconv.Itoa(s.Constants.MinWorkTimeMin) + "～" + strconv.Itoa(s.Constants.MaxWorkTimeMin) + "の値にしてください")
-			}
-		} else if strings.HasPrefix(slice[1], TimeOptionPrefixLegacy) {
-			num, err := strconv.Atoi(strings.TrimPrefix(slice[1], TimeOptionPrefixLegacy))
-			if err != nil { // 無効な値
-				return CommandDetails{}, customerror.InvalidCommand.New("「" + TimeOptionPrefixLegacy + "」の後の値を確認してください")
-			}
-			if s.Constants.MinWorkTimeMin <= num && num <= s.Constants.MaxWorkTimeMin {
-				workTimeMin = num
-			} else { // 無効な値
-				return CommandDetails{}, customerror.InvalidCommand.New("延長時間（分）は" + strconv.Itoa(s.Constants.MinWorkTimeMin) + "～" + strconv.Itoa(s.Constants.MaxWorkTimeMin) + "の値にしてください")
-			}
-		} else if strings.HasPrefix(slice[1], TimeOptionShortPrefixLegacy) {
-			num, err := strconv.Atoi(strings.TrimPrefix(slice[1], TimeOptionShortPrefixLegacy))
-			if err != nil { // 無効な値
-				return CommandDetails{}, customerror.InvalidCommand.New("「" + TimeOptionShortPrefixLegacy + "」の後の値を確認してください")
-			}
-			if s.Constants.MinWorkTimeMin <= num && num <= s.Constants.MaxWorkTimeMin {
-				workTimeMin = num
-			} else { // 無効な値
-				return CommandDetails{}, customerror.InvalidCommand.New("延長時間（分）は" + strconv.Itoa(s.Constants.MinWorkTimeMin) + "～" + strconv.Itoa(s.Constants.MaxWorkTimeMin) + "の値にしてください")
-			}
-		}
-	} else {
-		return CommandDetails{}, customerror.InvalidCommand.New("延長時間（分）を「" + TimeOptionPrefix + "」で指定してください")
-	}
-	
-	if workTimeMin == 0 {
-		return CommandDetails{}, customerror.InvalidCommand.New("オプションが正しく設定されているか確認してください")
+	// 時間オプションチェック
+	durationMin, err := s.ParseDurationMinOption(slice[1:], s.Constants.MinWorkTimeMin, s.Constants.MaxWorkTimeMin)
+	if err.IsNotNil() {
+		_ = s.MessageToLineBotWithError("failed to ParseDurationMinOption()", err.Body)
+		return CommandDetails{}, err
 	}
 	
 	return CommandDetails{
 		CommandType: More,
-		MoreMinutes: workTimeMin,
+		MoreMinutes: durationMin,
 	}, customerror.NewNil()
 }
 
@@ -831,6 +792,24 @@ func (s *System) ParseWorkNameOption(commandSlice []string) string {
 	return ""
 }
 
+func (s *System) ParseDurationMinOption(commandSlice []string, MinDuration, MaxDuration int) (int, customerror.CustomError) {
+	for _, str := range commandSlice {
+		if HasTimeOptionPrefix(str) {
+			num, err := strconv.Atoi(TrimTimeOptionPrefix(str))
+			if err != nil { // 無効な値
+				return 0, customerror.InvalidCommand.New("時間（分）の値を確認してください")
+			}
+			if MinDuration <= num && num <= MaxDuration {
+				return num, customerror.NewNil()
+			} else { // 無効な値
+				return 0, customerror.InvalidCommand.New("時間（分）は" + strconv.Itoa(
+					MinDuration) + "～" + strconv.Itoa(MaxDuration) + "の値にしてください")
+			}
+		}
+	}
+	return 0, customerror.InvalidCommand.New("オプションが正しく設定されているか確認してください")
+}
+
 func (s *System) ParseMinWorkOptions(commandSlice []string, MinDuration, MaxDuration int) (MinWorkOption,
 	customerror.CustomError) {
 	isWorkNameSet := false
@@ -858,46 +837,6 @@ func (s *System) ParseMinWorkOptions(commandSlice []string, MinDuration, MaxDura
 		}
 	}
 	return options, customerror.NewNil()
-}
-
-func HasWorkNameOptionPrefix(str string) bool {
-	return strings.HasPrefix(str, WorkNameOptionPrefix) ||
-		strings.HasPrefix(str, WorkNameOptionShortPrefix) ||
-		strings.HasPrefix(str, WorkNameOptionPrefixLegacy) ||
-		strings.HasPrefix(str, WorkNameOptionShortPrefixLegacy)
-}
-
-func TrimWorkNameOptionPrefix(str string) string {
-	if strings.HasPrefix(str, WorkNameOptionPrefix) {
-		return strings.TrimPrefix(str, WorkNameOptionPrefix)
-	} else if strings.HasPrefix(str, WorkNameOptionShortPrefix) {
-		return strings.TrimPrefix(str, WorkNameOptionShortPrefix)
-	} else if strings.HasPrefix(str, WorkNameOptionPrefixLegacy) {
-		return strings.TrimPrefix(str, WorkNameOptionPrefixLegacy)
-	} else if strings.HasPrefix(str, WorkNameOptionShortPrefixLegacy) {
-		return strings.TrimPrefix(str, WorkNameOptionShortPrefixLegacy)
-	}
-	return str
-}
-
-func HasTimeOptionPrefix(str string) bool {
-	return strings.HasPrefix(str, TimeOptionPrefix) ||
-		strings.HasPrefix(str, TimeOptionShortPrefix) ||
-		strings.HasPrefix(str, TimeOptionPrefixLegacy) ||
-		strings.HasPrefix(str, TimeOptionShortPrefixLegacy)
-}
-
-func TrimTimeOptionPrefix(str string) string {
-	if strings.HasPrefix(str, TimeOptionPrefix) {
-		return strings.TrimPrefix(str, TimeOptionPrefix)
-	} else if strings.HasPrefix(str, TimeOptionShortPrefix) {
-		return strings.TrimPrefix(str, TimeOptionShortPrefix)
-	} else if strings.HasPrefix(str, TimeOptionPrefixLegacy) {
-		return strings.TrimPrefix(str, TimeOptionPrefixLegacy)
-	} else if strings.HasPrefix(str, TimeOptionShortPrefixLegacy) {
-		return strings.TrimPrefix(str, TimeOptionPrefixLegacy)
-	}
-	return str
 }
 
 func (s *System) In(ctx context.Context, command CommandDetails) error {
@@ -940,16 +879,27 @@ func (s *System) In(ctx context.Context, command CommandDetails) error {
 		
 		// 席が指定されているか？
 		if command.CommandType == SeatIn {
-			// その席が空いているか？
-			isOk, err := s.IfSeatAvailable(ctx, tx, command.InOptions.SeatId)
-			if err != nil {
-				_ = s.MessageToLineBotWithError("failed s.IfSeatAvailable()", err)
-				s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、エラーが発生しました。もう一度試してみてください")
-				return err
-			}
-			if !isOk {
-				s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、その番号の席は"+"今は使えません。他の空いている席を選ぶか、「"+InCommand+"」で席を指定せずに入室してください")
-				return nil
+			// 0番席だったら最小番号の空席に決定
+			if command.InOptions.SeatId == 0 {
+				seatId, err := s.MinAvailableSeatId(ctx, tx)
+				if err != nil {
+					_ = s.MessageToLineBotWithError("failed s.MinAvailableSeatId()", err)
+					s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、エラーが発生しました。もう一度試してみてください")
+					return err
+				}
+				command.InOptions.SeatId = seatId
+			} else {
+				// その席が空いているか？
+				isOk, err := s.IfSeatAvailable(ctx, tx, command.InOptions.SeatId)
+				if err != nil {
+					_ = s.MessageToLineBotWithError("failed s.IfSeatAvailable()", err)
+					s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、エラーが発生しました。もう一度試してみてください")
+					return err
+				}
+				if !isOk {
+					s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、その番号の席は"+"今は使えません。他の空いている席を選ぶか、「"+InCommand+"」で席を指定せずに入室してください")
+					return nil
+				}
 			}
 		} else { // 席の指定なし
 			seatId, cerr := s.RandomAvailableSeatId(ctx, tx)
@@ -1223,15 +1173,18 @@ func (s *System) ShowSeatInfo(_ CommandDetails, ctx context.Context) error {
 			realtimeWorkedTimeMin := int(utils.JstNow().Sub(currentSeat.EnteredAt).Minutes())
 			remainingMinutes := int(currentSeat.Until.Sub(utils.JstNow()).Minutes())
 			var stateStr string
+			var breakUntilStr string
 			switch currentSeat.State {
 			case myfirestore.WorkState:
 				stateStr = "作業中"
+				breakUntilStr = ""
 			case myfirestore.BreakState:
 				stateStr = "休憩中"
+				breakUntilStr = "作業再開まで" + strconv.Itoa(int(currentSeat.CurrentStateUntil.Sub(utils.JstNow()).Minutes())) + "分です"
 			}
 			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さんは"+strconv.Itoa(currentSeat.SeatId)+
 				"番の席で"+stateStr+"です。現在"+strconv.Itoa(realtimeWorkedTimeMin)+"分入室中。自動退室まで残り"+
-				strconv.Itoa(remainingMinutes)+"分です")
+				strconv.Itoa(remainingMinutes)+"分です。"+breakUntilStr)
 		} else {
 			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+
 				"さんは入室していません。「"+InCommand+"」コマンドで入室しましょう！")
@@ -1250,7 +1203,7 @@ func (s *System) Report(command CommandDetails, ctx context.Context) error {
 		"チャンネルID: " + s.ProcessedUserId + "\n" +
 		"チャンネル名: " + s.ProcessedUserDisplayName + "\n\n" +
 		command.ReportMessage
-	err := s.Constants.lineBot.SendMessage(lineMessage)
+	err := s.MessageToLineBot(lineMessage)
 	if err != nil {
 		s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、エラーが発生しました")
 		log.Println(err)
@@ -1290,7 +1243,7 @@ func (s *System) Kick(command CommandDetails, ctx context.Context) error {
 				if err != nil {
 					_ = s.MessageToLineBotWithError("failed to RetrieveUser", err)
 					s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+
-						"さん、残念ながらエラーが発生しました。もう一度試してみてください")
+						"さん、エラーが発生しました。もう一度試してみてください")
 					return err
 				}
 				roomDoc, err := s.Constants.FirestoreController.RetrieveRoom(ctx, tx)
@@ -1302,8 +1255,21 @@ func (s *System) Kick(command CommandDetails, ctx context.Context) error {
 				}
 				seats := roomDoc.Seats
 				
-				_, _, err = s.exitRoom(tx, seats, seat, &userDoc)
+				_, workedTimeSec, exitErr := s.exitRoom(tx, seats, seat, &userDoc)
+				if exitErr != nil {
+					return exitErr
+				}
+				s.MessageToLiveChat(ctx, seat.UserDisplayName+"さんが退室しました🚶🚪"+
+					"（+ "+strconv.Itoa(workedTimeSec/60)+"分、"+strconv.Itoa(seat.SeatId)+"番席）")
+				
+				err = s.MessageToDiscordBot(s.ProcessedUserDisplayName + "さん、" + strconv.Itoa(seat.
+					SeatId) + "番席のユーザーをkickしました。\n" +
+					"チャンネル名: " + seat.UserDisplayName + "\n" +
+					"作業名: " + seat.WorkName + "\n休憩中の作業名: " + seat.BreakWorkName + "\n" +
+					"入室時間: " + strconv.Itoa(workedTimeSec/60) + "分\n" +
+					"チャンネルURL: https://youtube.com/channel/" + seat.UserId)
 				if err != nil {
+					_ = s.MessageToLineBotWithError("failed MessageToDiscordBot()", err)
 					return err
 				}
 			} else {
@@ -1333,10 +1299,17 @@ func (s *System) Check(command CommandDetails, ctx context.Context) error {
 				}
 				sinceMinutes := utils.JstNow().Sub(seat.EnteredAt).Minutes()
 				untilMinutes := seat.Until.Sub(utils.JstNow()).Minutes()
-				message := s.ProcessedUserDisplayName + "さん、" + strconv.Itoa(seat.SeatId) + "番席には" +
-					seat.UserDisplayName + "さんが" + strconv.Itoa(int(sinceMinutes)) + "分間着席しており、" +
-					"作業名は\"" + seat.WorkName + "\"です。" + strconv.Itoa(int(untilMinutes)) + "分後に自動退室予定です。"
-				s.MessageToLiveChat(ctx, message)
+				message := s.ProcessedUserDisplayName + "さん、" + strconv.Itoa(seat.SeatId) + "番席のユーザー情報です。\n" +
+					"チャンネル名: " + seat.UserDisplayName + "\n" + "入室時間: " + strconv.Itoa(int(
+					sinceMinutes)) + "分\n" +
+					"作業名: " + seat.WorkName + "\n" + "休憩中の作業名: " + seat.BreakWorkName + "\n" +
+					"自動退室まで" + strconv.Itoa(int(untilMinutes)) + "分\n" +
+					"チャンネルURL: https://youtube.com/channel/" + seat.UserId
+				err = s.MessageToDiscordBot(message)
+				if err != nil {
+					_ = s.MessageToLineBotWithError("failed MessageToDiscordBot()", err)
+					return err
+				}
 			} else {
 				s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、その番号の座席は誰も使用していません")
 			}
@@ -1523,8 +1496,13 @@ func (s *System) Change(command CommandDetails, ctx context.Context) error {
 		// これ以降は書き込みのみ可。
 		for _, changeOption := range command.ChangeOptions {
 			if changeOption.Type == WorkName {
-				// 作業名を書きかえ
-				seats = CreateUpdatedSeatsSeatWorkName(seats, changeOption.StringValue, s.ProcessedUserId)
+				// 作業名もしくは休憩作業名を書きかえ
+				switch currentSeat.State {
+				case myfirestore.WorkState:
+					seats = CreateUpdatedSeatsSeatWorkName(seats, changeOption.StringValue, s.ProcessedUserId)
+				case myfirestore.BreakState:
+					seats = CreateUpdatedSeatsSeatBreakWorkName(seats, changeOption.StringValue, s.ProcessedUserId)
+				}
 				err := s.Constants.FirestoreController.UpdateSeats(tx, seats)
 				if err != nil {
 					_ = s.MessageToLineBotWithError("failed to UpdateSeats", err)
@@ -1569,46 +1547,89 @@ func (s *System) More(command CommandDetails, ctx context.Context) error {
 		// 入室しているか？
 		isUserInRoom, err := s.IsUserInRoom(ctx, tx)
 		if err != nil {
+			_ = s.MessageToLineBotWithError("failed to IsUserInRoom()", err)
+			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、エラーが発生しました")
 			return err
 		}
-		if isUserInRoom {
-			// 時間を指定分延長
-			currentSeat, cerr := s.CurrentSeat(ctx, tx)
-			if cerr.IsNotNil() {
-				return cerr.Body
-			}
+		if !isUserInRoom {
+			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、入室中のみ使えるコマンドです")
+			return nil
+		}
+		
+		currentSeat, cerr := s.CurrentSeat(ctx, tx)
+		if cerr.IsNotNil() {
+			_ = s.MessageToLineBotWithError("failed to s.CurrentSeat(ctx)", cerr.Body)
+			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+
+				"さん、エラーが発生しました。もう一度試してみてください")
+			return cerr.Body
+		}
+		roomDoc, err := s.Constants.FirestoreController.RetrieveRoom(ctx, tx)
+		if err != nil {
+			_ = s.MessageToLineBotWithError("failed to RetrieveRoomJ()", err)
+			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+
+				"さん、エラーが発生しました。もう一度試してみてください")
+			return err
+		}
+		seats := roomDoc.Seats
+		
+		replyMessage := s.ProcessedUserDisplayName + "さん、"
+		var addedMin int
+		var remainingUntilExitMin int
+		
+		switch currentSeat.State {
+		case myfirestore.WorkState:
+			// 作業時間を指定分延長する
 			newUntil := currentSeat.Until.Add(time.Duration(command.MoreMinutes) * time.Minute)
 			// もし延長後の時間が最大作業時間を超えていたら、最大作業時間まで延長
 			if int(newUntil.Sub(utils.JstNow()).Minutes()) > s.Constants.MaxWorkTimeMin {
 				newUntil = utils.JstNow().Add(time.Duration(s.Constants.MaxWorkTimeMin) * time.Minute)
-				s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、現在時刻から"+
-					strconv.Itoa(s.Constants.MaxWorkTimeMin)+"分後までのみ作業時間を延長することができます。延長できる最大の時間で設定します")
+				replyMessage += "現在時刻から" + strconv.Itoa(s.Constants.
+					MaxWorkTimeMin) + "分後までのみ作業時間を延長可能です。延長できる最大の時間で設定します。"
 			}
-			
-			roomDoc, err := s.Constants.FirestoreController.RetrieveRoom(ctx, tx)
-			if err != nil {
-				_ = s.MessageToLineBotWithError("failed to RetrieveRoomJ()", err)
-				s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+
-					"さん、エラーが発生しました。もう一度試してみてください")
-				return err
-			}
-			seats := roomDoc.Seats
+			addedMin = int(newUntil.Sub(currentSeat.Until).Minutes())
 			seats = CreateUpdatedSeatsSeatUntil(seats, newUntil, s.ProcessedUserId)
-			
-			err = s.Constants.FirestoreController.UpdateSeats(tx, seats)
-			if err != nil {
-				_ = s.MessageToLineBotWithError("failed to s.Constants.FirestoreController.UpdateSeats", err)
-				s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+
-					"さん、エラーが発生しました。もう一度試してみてください")
-				return err
+			remainingUntilExitMin = int(newUntil.Sub(utils.JstNow()).Minutes())
+		case myfirestore.BreakState:
+			// 休憩時間を指定分延長する
+			newBreakUntil := currentSeat.CurrentStateUntil.Add(time.Duration(command.MoreMinutes) * time.Minute)
+			// もし延長後の休憩時間が最大休憩時間を超えていたら、最大休憩時間まで延長
+			if int(newBreakUntil.Sub(currentSeat.CurrentStateStartedAt).Minutes()) > s.Constants.MaxBreakDurationMin {
+				newBreakUntil = currentSeat.CurrentStateStartedAt.Add(time.Duration(s.Constants.MaxBreakDurationMin) * time.Minute)
+				replyMessage += "休憩は最大" + strconv.Itoa(s.Constants.
+					MaxBreakDurationMin) + "分まで可能です。延長できる最大の時間で設定します。"
 			}
-			addedMin := int(newUntil.Sub(currentSeat.Until).Minutes())
-			realtimeWorkedTimeMin := int(utils.JstNow().Sub(currentSeat.EnteredAt).Minutes())
-			remainingWorkMin := int(newUntil.Sub(utils.JstNow()).Minutes())
-			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、自動退室までの時間を"+strconv.Itoa(addedMin)+"分延長しました。現在"+strconv.Itoa(realtimeWorkedTimeMin)+"分入室中。自動退室まで残り"+strconv.Itoa(remainingWorkMin)+"分です")
-		} else {
-			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、入室中のみ使えるコマンドです")
+			addedMin = int(newBreakUntil.Sub(currentSeat.CurrentStateUntil).Minutes())
+			seats = CreateUpdatedSeatsSeatCurrentStateUntil(seats, newBreakUntil, s.ProcessedUserId)
+			// もし延長後の休憩時間がUntilを超えていたらUntilもそれに合わせる
+			if newBreakUntil.After(currentSeat.Until) {
+				newUntil := newBreakUntil
+				seats = CreateUpdatedSeatsSeatUntil(seats, newUntil, s.ProcessedUserId)
+				remainingUntilExitMin = int(newUntil.Sub(utils.JstNow()).Minutes())
+			} else {
+				remainingUntilExitMin = int(currentSeat.Until.Sub(utils.JstNow()).Minutes())
+			}
 		}
+		
+		err = s.Constants.FirestoreController.UpdateSeats(tx, seats)
+		if err != nil {
+			_ = s.MessageToLineBotWithError("failed to s.Constants.FirestoreController.UpdateSeats", err)
+			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+
+				"さん、エラーが発生しました。もう一度試してみてください")
+			return err
+		}
+		
+		switch currentSeat.State {
+		case myfirestore.WorkState:
+			replyMessage += "自動退室までの時間を" + strconv.Itoa(addedMin) + "分延長しました。"
+		case myfirestore.BreakState:
+			replyMessage += "休憩時間を" + strconv.Itoa(addedMin) + "分延長しました。"
+			remainingBreakMin := int(currentSeat.CurrentStateUntil.Add(time.Duration(addedMin) * time.Minute).Sub(
+				utils.JstNow()).Minutes())
+			replyMessage += "作業再開まで残り" + strconv.Itoa(remainingBreakMin) + "分。"
+		}
+		realtimeEnteredTimeMin := int(utils.JstNow().Sub(currentSeat.EnteredAt).Minutes())
+		replyMessage += "現在" + strconv.Itoa(realtimeEnteredTimeMin) + "分入室中。自動退室まで残り" + strconv.Itoa(remainingUntilExitMin) + "分です"
+		s.MessageToLiveChat(ctx, replyMessage)
 		
 		return nil
 	})
@@ -1642,7 +1663,8 @@ func (s *System) Break(ctx context.Context, command CommandDetails) error {
 		currentWorkedMin := int(utils.JstNow().Sub(currentSeat.CurrentStateStartedAt).Minutes())
 		if currentWorkedMin < s.Constants.MinBreakIntervalMin {
 			s.MessageToLiveChat(ctx, s.ProcessedUserDisplayName+"さん、作業を始めてから"+strconv.Itoa(s.Constants.
-				MinBreakIntervalMin)+"分間は休憩できません。現在"+strconv.Itoa(currentWorkedMin)+"秒作業中")
+				MinBreakIntervalMin)+"分間は休憩できません。現在"+strconv.Itoa(currentWorkedMin)+"分作業中")
+			return nil
 		}
 		
 		// 休憩処理
@@ -2058,7 +2080,7 @@ func (s *System) exitRoom(
 	
 	newSeats := previousSeats[:0]
 	for _, seat := range previousSeats {
-		if seat.UserId != seat.UserId {
+		if seat.UserId != previousSeat.UserId {
 			newSeats = append(newSeats, seat)
 		}
 	}
@@ -2181,7 +2203,7 @@ func (s *System) UpdateTotalWorkTime(tx *firestore.Transaction, userId string, p
 	// 累計作業時間が減るなんてことがないか確認
 	if newTotalSec < previousTotalSec {
 		message := "newTotalSec < previousTotalSec ??!! 処理を中断します。"
-		_ = s.Constants.lineBot.SendMessage(userId + ": " + message)
+		_ = s.MessageToLineBot(userId + ": " + message)
 		return errors.New(message)
 	}
 	
@@ -2347,6 +2369,7 @@ func (s *System) OrganizeDatabase(ctx context.Context) error {
 					strconv.Itoa(int(until.Sub(jstNow).Minutes()))+"分）")
 			}
 		}
+		
 		return nil
 	})
 }
@@ -2358,44 +2381,36 @@ func (s *System) CheckLiveStreamStatus(ctx context.Context) error {
 
 func (s *System) ResetDailyTotalStudyTime(ctx context.Context) error {
 	log.Println("ResetDailyTotalStudyTime()")
-	return s.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		constantsConfig, err := s.Constants.FirestoreController.RetrieveSystemConstantsConfig(ctx, tx)
+	// 時間がかかる処理なのでトランザクションはなし
+	previousDate := s.Constants.LastResetDailyTotalStudySec.In(utils.JapanLocation())
+	now := utils.JstNow()
+	isDifferentDay := now.Year() != previousDate.Year() || now.Month() != previousDate.Month() || now.Day() != previousDate.Day()
+	if isDifferentDay && now.After(previousDate) {
+		userIter := s.Constants.FirestoreController.RetrieveAllNonDailyZeroUserDocs(ctx)
+		count := 0
+		for {
+			doc, err := userIter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			err = s.Constants.FirestoreController.ResetDailyTotalStudyTime(ctx, doc.Ref)
+			if err != nil {
+				return err
+			}
+			count += 1
+		}
+		_ = s.MessageToLineBot("successfully reset all non-daily-zero user's daily total study time. (" + strconv.Itoa(count) + " users)")
+		err := s.Constants.FirestoreController.SetLastResetDailyTotalStudyTime(ctx, now)
 		if err != nil {
 			return err
 		}
-		previousDate := constantsConfig.LastResetDailyTotalStudySec.In(utils.JapanLocation())
-		now := utils.JstNow()
-		isDifferentDay := now.Year() != previousDate.Year() || now.Month() != previousDate.Month() || now.Day() != previousDate.Day()
-		if isDifferentDay && now.After(previousDate) {
-			userIter := s.Constants.FirestoreController.RetrieveAllNonDailyZeroUserDocs(ctx)
-			if err != nil {
-				return err
-			}
-			count := 0
-			for {
-				doc, err := userIter.Next()
-				if err == iterator.Done {
-					break
-				}
-				if err != nil {
-					return err
-				}
-				err = s.Constants.FirestoreController.ResetDailyTotalStudyTime(tx, doc.Ref)
-				if err != nil {
-					return err
-				}
-				count += 1
-			}
-			_ = s.Constants.lineBot.SendMessage("successfully reset all non-daily-zero user's daily total study time. (" + strconv.Itoa(count) + " users)")
-			err = s.Constants.FirestoreController.SetLastResetDailyTotalStudyTime(tx, now)
-			if err != nil {
-				return err
-			}
-		} else {
-			_ = s.Constants.lineBot.SendMessage("all user's daily total study times are already reset today.")
-		}
-		return nil
-	})
+	} else {
+		_ = s.MessageToLineBot("all user's daily total study times are already reset today.")
+	}
+	return nil
 }
 
 func (s *System) RetrieveAllUsersTotalStudySecList(ctx context.Context, tx *firestore.Transaction) ([]UserIdTotalStudySecSet, error) {
@@ -2452,55 +2467,118 @@ func (s *System) MinAvailableSeatId(ctx context.Context, tx *firestore.Transacti
 	}
 }
 
-func CreateUpdatedSeatsSeatColorCode(seats []myfirestore.Seat, colorCode string, userId string) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].ColorCode = colorCode
-			break
+func (s *System) AddLiveChatHistoryDoc(ctx context.Context, chatMessage *youtube.LiveChatMessage) error {
+	return s.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		// publishedAtの値の例: "2021-11-13T07:21:30.486982+00:00"
+		publishedAt, err := time.Parse(time.RFC3339Nano, chatMessage.Snippet.PublishedAt)
+		if err != nil {
+			return err
 		}
-	}
-	return seats
+		publishedAt = publishedAt.In(utils.JapanLocation())
+		
+		liveChatHistoryDoc := myfirestore.LiveChatHistoryDoc{
+			AuthorChannelId:       chatMessage.AuthorDetails.ChannelId,
+			AuthorDisplayName:     chatMessage.AuthorDetails.DisplayName,
+			AuthorProfileImageUrl: chatMessage.AuthorDetails.ProfileImageUrl,
+			AuthorIsChatModerator: chatMessage.AuthorDetails.IsChatModerator,
+			Id:                    chatMessage.Id,
+			LiveChatId:            chatMessage.Snippet.LiveChatId,
+			MessageText:           chatMessage.Snippet.TextMessageDetails.MessageText,
+			PublishedAt:           publishedAt,
+			Type:                  chatMessage.Snippet.Type,
+		}
+		err = s.Constants.FirestoreController.AddLiveChatHistoryDoc(ctx, tx, liveChatHistoryDoc)
+		if err != nil {
+			return err
+		}
+		
+		return nil
+	})
 }
 
-func CreateUpdatedSeatsSeatUntil(seats []myfirestore.Seat, newUntil time.Time, userId string) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].Until = newUntil
-			break
-		}
-	}
-	return seats
-}
-
-func CreateUpdatedSeatsSeatWorkName(seats []myfirestore.Seat, workName string, userId string) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].WorkName = workName
-			break
-		}
-	}
-	return seats
-}
-
-func CreateUpdatedSeatsSeatState(seats []myfirestore.Seat, userId string, state myfirestore.SeatState,
-	currentStateStartedAt time.Time, currentStateUntil time.Time, cumulativeWorkSec int, dailyCumulativeWorkSec int,
-	workName string,
-) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].State = state
-			seats[i].CurrentStateStartedAt = currentStateStartedAt
-			seats[i].CurrentStateUntil = currentStateUntil
-			seats[i].CumulativeWorkSec = cumulativeWorkSec
-			seats[i].DailyCumulativeWorkSec = dailyCumulativeWorkSec
-			switch state {
-			case myfirestore.BreakState:
-				seats[i].BreakWorkName = workName
-			case myfirestore.WorkState:
-				seats[i].WorkName = workName
+func (s *System) DeleteLiveChatHistoryBeforeDate(ctx context.Context, date time.Time) error {
+	return s.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		// date以前の全てのlive chat history docsをクエリで取得
+		iter := s.Constants.FirestoreController.RetrieveAllLiveChatHistoryDocIdsBeforeDate(ctx, date)
+		
+		// forで各docをdeleteしていく
+		for {
+			doc, err := iter.Next()
+			if err == iterator.Done {
+				break
 			}
-			break
+			if err != nil {
+				return err
+			}
+			err = s.Constants.FirestoreController.DeleteLiveChatHistoryDoc(tx, doc.Ref.ID)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+}
+
+func (s *System) BackupLiveChatHistoryFromGcsToBigquery(ctx context.Context, clientOption option.ClientOption) error {
+	log.Println("BackupLiveChatHistoryFromGcsToBigquery()")
+	// 時間がかかる処理なのでトランザクションはなし
+	previousDate := s.Constants.LastTransferLiveChatHistoryBigquery.In(utils.JapanLocation())
+	now := utils.JstNow()
+	isDifferentDay := now.Year() != previousDate.Year() || now.Month() != previousDate.Month() || now.Day() != previousDate.Day()
+	if isDifferentDay && now.After(previousDate) {
+		gcsClient, err := mystorage.NewStorageClient(ctx, clientOption, s.Constants.GcpRegion)
+		if err != nil {
+			return err
+		}
+		defer gcsClient.CloseClient()
+		
+		projectId, err := GetGcpProjectId(ctx, clientOption)
+		if err != nil {
+			return err
+		}
+		bqClient, err := mybigquery.NewBigqueryClient(ctx, projectId, clientOption, s.Constants.GcpRegion)
+		if err != nil {
+			return err
+		}
+		defer bqClient.CloseClient()
+		
+		gcsTargetFolderName, err := gcsClient.GetGcsYesterdayExportFolderName(ctx, s.Constants.GcsFirestoreExportBucketName)
+		if err != nil {
+			return err
+		}
+		
+		err = bqClient.ReadCollectionsFromGcs(ctx, gcsTargetFolderName, s.Constants.GcsFirestoreExportBucketName,
+			[]string{myfirestore.LiveChatHistory})
+		if err != nil {
+			return err
+		}
+		_ = s.MessageToLineBot("successfully transfer yesterday's live chat history to bigquery.")
+		
+		// 一定期間前のlive-chat-historyを削除
+		// 何日以降分を保持するか求める
+		retentionFromDate := utils.JstNow().Add(-time.Duration(s.Constants.LiveChatHistoryRetentionDays*24) * time.
+			Hour)
+		retentionFromDate = time.Date(
+			retentionFromDate.Year(),
+			retentionFromDate.Month(),
+			retentionFromDate.Day(),
+			0, 0, 0, 0, retentionFromDate.Location(),
+		)
+		
+		// 削除
+		err = s.DeleteLiveChatHistoryBeforeDate(ctx, retentionFromDate)
+		if err != nil {
+			return err
+		}
+		_ = s.MessageToLineBot(strconv.Itoa(int(retentionFromDate.Month())) + "月" + strconv.Itoa(int(retentionFromDate.
+			Day())) + "日より前の日付のライブチャット履歴をFirestoreから削除しました。")
+		
+		err = s.Constants.FirestoreController.SetLastTransferLiveChatHistoryBigquery(ctx, now)
+		if err != nil {
+			return err
+		}
+	} else {
+		_ = s.MessageToLineBot("yesterday's live chat histories are already reset today.")
 	}
-	return seats
+	return nil
 }

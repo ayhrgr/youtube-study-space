@@ -23,3 +23,4 @@ system/aws-lambda/main.zip
 
 youtube-monitor/.DS_Store
 system/.serverless/youtubeStudySpace.zip
+youtube-monitor/.env
