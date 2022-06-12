@@ -26,13 +26,13 @@ func ExitAllUsersInRoom(clientOption option.ClientOption, ctx context.Context) {
 		return
 	}
 	
-	_system.MessageToLiveChat(ctx, "全ユーザーを退室させます。")
+	_system.MessageToLiveChat(ctx, nil, "全ユーザーを退室させます。")
 	err = _system.ExitAllUserInRoom(ctx)
 	if err != nil {
 		panic(err)
 		return
 	}
-	_system.MessageToLiveChat(ctx, "全ユーザーを退室させました。")
+	_system.MessageToLiveChat(ctx, nil, "全ユーザーを退室させました。")
 }
 
 func ExitSpecificUser(userId string, clientOption option.ClientOption, ctx context.Context) {
@@ -45,7 +45,6 @@ func ExitSpecificUser(userId string, clientOption option.ClientOption, ctx conte
 	_system.SetProcessedUser(userId, "**", false, false)
 	outCommandDetails := core.CommandDetails{
 		CommandType: core.Out,
-		InOptions:   core.InOptions{},
 	}
 	
 	err = _system.Out(outCommandDetails, ctx)
@@ -65,7 +64,7 @@ func ExportUsersCollectionJson(clientOption option.ClientOption, ctx context.Con
 	var allUsersTotalStudySecList []core.UserIdTotalStudySecSet
 	err = _system.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		var err error
-		allUsersTotalStudySecList, err = _system.RetrieveAllUsersTotalStudySecList(ctx, tx)
+		allUsersTotalStudySecList, err = _system.RetrieveAllUsersTotalStudySecList(ctx)
 		if err != nil {
 			panic(err)
 		}

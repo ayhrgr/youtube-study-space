@@ -1,10 +1,12 @@
 package mybigquery
 
 import (
+	"app.modules/core/myfirestore"
 	"app.modules/core/utils"
 	"cloud.google.com/go/bigquery"
 	"context"
 	"github.com/pkg/errors"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"log"
 	"time"
@@ -29,8 +31,8 @@ func NewBigqueryClient(ctx context.Context, projectId string, clientOption optio
 	}, nil
 }
 
-func (controller *BigqueryController) CloseClient() {
-	err := controller.Client.Close()
+func (c *BigqueryController) CloseClient() {
+	err := c.Client.Close()
 	if err != nil {
 		log.Println("failed to close bigquery client.")
 	} else {
@@ -38,7 +40,7 @@ func (controller *BigqueryController) CloseClient() {
 	}
 }
 
-func (controller *BigqueryController) ReadCollectionsFromGcs(ctx context.Context,
+func (c *BigqueryController) ReadCollectionsFromGcs(ctx context.Context,
 	gcsFolderName string, bucketName string,
 	collections []string) error {
 	for _, collectionName := range collections {
@@ -48,10 +50,10 @@ func (controller *BigqueryController) ReadCollectionsFromGcs(ctx context.Context
 		gcsRef.AllowJaggedRows = true
 		gcsRef.SourceFormat = bigquery.DatastoreBackup
 		
-		dataset := controller.Client.Dataset(DatasetName)
+		dataset := c.Client.Dataset(DatasetName)
 		loader := dataset.Table(TemporaryTableName).LoaderFrom(gcsRef)
 		loader.WriteDisposition = bigquery.WriteTruncate // 上書き
-		loader.Location = controller.WorkingRegion
+		loader.Location = c.WorkingRegion
 		job, err := loader.Run(ctx)
 		if err != nil {
 			return err
@@ -78,13 +80,43 @@ func (controller *BigqueryController) ReadCollectionsFromGcs(ctx context.Context
 		yesterdayEnd := time.Date(jstNow.Year(), jstNow.Month(), jstNow.Day(), 0, 0, 0, 0, jstNow.Location())
 		
 		// bigqueryにおいて一時テーブルから日時を指定してメインテーブルにデータを読込
-		query := controller.Client.Query("SELECT * FROM `" + controller.Client.Project() + "." + DatasetName + "." +
-			TemporaryTableName + "` WHERE FORMAT_TIMESTAMP('%F %T', published_at, '+09:00') " +
-			"BETWEEN '" + yesterdayStart.Format("2006-01-02 15:04:05") + "' AND '" +
-			yesterdayEnd.Format("2006-01-02 15:04:05") + "'")
-		query.Location = controller.WorkingRegion
+		var query *bigquery.Query
+		
+		// 一時テーブルにロードされたデータが0件ならばここで終了。1件も読み込まれないと一時テーブルのスキーマが定義されないため、後続のクエリでエラーになる。
+		query = c.Client.Query("SELECT * FROM `" + c.Client.Project() + "." + DatasetName + "." + TemporaryTableName + "` LIMIT 10")
+		it, err := query.Read(ctx)
+		if err != nil {
+			return err
+		}
+		numRows, err := iteratorSize(it)
+		if err != nil {
+			return err
+		}
+		if numRows == 0 {
+			log.Println("number of loaded rows is zero.")
+			continue
+		}
+		
+		switch collectionName {
+		case myfirestore.LiveChatHistory:
+			query = c.Client.Query("SELECT * FROM `" + c.Client.Project() + "." + DatasetName + "." +
+				TemporaryTableName + "` WHERE FORMAT_TIMESTAMP('%F %T', published_at, '+09:00') " +
+				"BETWEEN '" + yesterdayStart.Format("2006-01-02 15:04:05") + "' AND '" +
+				yesterdayEnd.Format("2006-01-02 15:04:05") + "'")
+		case myfirestore.UserActivities:
+			query = c.Client.Query("SELECT * FROM `" + c.Client.Project() + "." + DatasetName + "." +
+				TemporaryTableName + "` WHERE FORMAT_TIMESTAMP('%F %T', taken_at, '+09:00') " +
+				"BETWEEN '" + yesterdayStart.Format("2006-01-02 15:04:05") + "' AND '" +
+				yesterdayEnd.Format("2006-01-02 15:04:05") + "'")
+		}
+		query.Location = c.WorkingRegion
 		query.WriteDisposition = bigquery.WriteAppend // 追加
-		query.QueryConfig.Dst = dataset.Table(LiveChatHistoryMainTableName)
+		switch collectionName {
+		case myfirestore.LiveChatHistory:
+			query.QueryConfig.Dst = dataset.Table(LiveChatHistoryMainTableName)
+		case myfirestore.UserActivities:
+			query.QueryConfig.Dst = dataset.Table(UserActivityHistoryMainTableName)
+		}
 		job, err = query.Run(ctx)
 		if err != nil {
 			return err
@@ -104,5 +136,22 @@ func (controller *BigqueryController) ReadCollectionsFromGcs(ctx context.Context
 			return errors.New("failed transfer data from bigquery temporary table to main table.")
 		}
 	}
+	log.Println("finished all collection's processes.")
 	return nil
+}
+
+func iteratorSize(it *bigquery.RowIterator) (int, error) {
+	i := 0
+	for {
+		var row []bigquery.Value
+		err := it.Next(&row)
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return -1, err
+		}
+		i++
+	}
+	return i, nil
 }

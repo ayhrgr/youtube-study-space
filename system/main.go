@@ -9,6 +9,7 @@ import (
 	"google.golang.org/api/option"
 	"google.golang.org/api/transport"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -41,15 +42,6 @@ func Init() (option.ClientOption, context.Context, error) {
 	return clientOption, ctx, nil
 }
 
-func GetCurrentProjectId() string {
-	utils.LoadEnv()
-	credentialFilePath := os.Getenv("CREDENTIAL_FILE_LOCATION")
-	ctx := context.Background()
-	clientOption := option.WithCredentialsFile(credentialFilePath)
-	creds, _ := transport.Creds(ctx, clientOption)
-	return creds.ProjectID
-}
-
 // LocalMain ローカル運用
 func LocalMain(ctx context.Context, clientOption option.ClientOption) {
 	
@@ -62,25 +54,28 @@ func LocalMain(ctx context.Context, clientOption option.ClientOption) {
 	_ = _system.MessageToLineBot("Botが起動しました")
 	defer func() {
 		_system.CloseFirestoreClient()
-		_system.MessageToLiveChat(ctx, "エラーが起きたため終了します")
+		_system.MessageToLiveChat(ctx, nil, "エラーが起きたため終了します")
 		_ = _system.MessageToLineBot("app stopped!!")
 	}()
 	
-	sleepIntervalMilli := _system.Constants.DefaultSleepIntervalMilli
-	checkDesiredMaxSeatsIntervalSec := _system.Constants.CheckDesiredMaxSeatsIntervalSec
+	checkDesiredMaxSeatsIntervalSec := _system.Configs.Constants.CheckDesiredMaxSeatsIntervalSec
 	
 	lastCheckedDesiredMaxSeats := utils.JstNow()
 	
 	numContinuousRetrieveNextPageTokenFailed := 0
 	numContinuousListMessagesFailed := 0
+	var lastChatFetched time.Time
+	var waitAtLeastMilliSec1 float64
+	var waitAtLeastMilliSec2 float64
+	var sleepInterval time.Duration
 	
 	for {
 		// max_seatsを変えるか確認
 		if utils.JstNow().After(lastCheckedDesiredMaxSeats.Add(time.Duration(checkDesiredMaxSeatsIntervalSec) * time.Second)) {
 			log.Println("checking desired max seats")
-			constants, err := _system.Constants.FirestoreController.RetrieveSystemConstantsConfig(ctx, nil)
+			constants, err := _system.FirestoreController.RetrieveSystemConstantsConfig(ctx, nil)
 			if err != nil {
-				_ = _system.MessageToLineBotWithError("_system.FirestoreController.RetrieveSystemConstantsConfig(ctx)でエラー", err)
+				_ = _system.MessageToLineBotWithError("_system.firestoreController.RetrieveSystemConstantsConfig(ctx)でエラー", err)
 			} else {
 				if constants.DesiredMaxSeats != constants.MaxSeats {
 					err := _system.AdjustMaxSeats(ctx)
@@ -120,6 +115,7 @@ func LocalMain(ctx context.Context, clientOption option.ClientOption) {
 		} else {
 			numContinuousListMessagesFailed = 0
 		}
+		lastChatFetched = utils.JstNow()
 		
 		// nextPageTokenを保存
 		err = _system.SaveNextPageToken(ctx, nextPageToken)
@@ -141,20 +137,18 @@ func LocalMain(ctx context.Context, clientOption option.ClientOption) {
 		for _, chatMessage := range chatMessages {
 			message := chatMessage.Snippet.TextMessageDetails.MessageText
 			log.Println(chatMessage.AuthorDetails.ChannelId + " (" + chatMessage.AuthorDetails.DisplayName + "): " + message)
-			err := _system.Command(message, chatMessage.AuthorDetails.ChannelId, chatMessage.AuthorDetails.DisplayName, chatMessage.AuthorDetails.IsChatModerator, chatMessage.AuthorDetails.IsChatOwner, ctx)
-			if err.IsNotNil() {
-				_ = _system.MessageToLineBotWithError("error in core.Command()", err.Body)
+			err := _system.Command(ctx, message, chatMessage.AuthorDetails.ChannelId, chatMessage.AuthorDetails.DisplayName, chatMessage.AuthorDetails.IsChatModerator, chatMessage.AuthorDetails.IsChatOwner)
+			if err != nil {
+				_ = _system.MessageToLineBotWithError("error in core.Command()", err)
 			}
 		}
 		
-		if pollingIntervalMillis > _system.Constants.DefaultSleepIntervalMilli {
-			sleepIntervalMilli = pollingIntervalMillis + 1000
-		} else {
-			sleepIntervalMilli = _system.Constants.DefaultSleepIntervalMilli
-		}
-		fmt.Println()
-		log.Printf("waiting for %.1f seconds...\n", float32(sleepIntervalMilli)/1000.0)
-		time.Sleep(time.Duration(sleepIntervalMilli) * time.Millisecond)
+		waitAtLeastMilliSec1 = math.Max(float64((time.Duration(pollingIntervalMillis)*time.Millisecond - utils.
+			JstNow().Sub(lastChatFetched)).Milliseconds()), 0)
+		waitAtLeastMilliSec2 = math.Max(float64((time.Duration(_system.Configs.Constants.SleepIntervalMilli)*time.Millisecond - utils.JstNow().Sub(lastChatFetched)).Milliseconds()), 0)
+		sleepInterval = time.Duration(math.Max(waitAtLeastMilliSec1, waitAtLeastMilliSec2)) * time.Millisecond
+		log.Printf("waiting for %.2f seconds...\n\n", sleepInterval.Seconds())
+		time.Sleep(sleepInterval)
 	}
 }
 
@@ -167,9 +161,8 @@ func Test(ctx context.Context, clientOption option.ClientOption) {
 	defer _system.CloseFirestoreClient()
 	// === ここまでおまじない ===
 	
-	err = _system.BackupLiveChatHistoryFromGcsToBigquery(ctx, clientOption)
+	err = _system.DailyOrganizeDatabase(ctx)
 	if err != nil {
-		_ = _system.MessageToLineBotWithError("failed to transfer live chat history to bigquery", err)
 		panic(err)
 	}
 }
@@ -187,5 +180,5 @@ func main() {
 	
 	//direct_operations.ExportUsersCollectionJson(clientOption, ctx)
 	//direct_operations.ExitAllUsersInRoom(clientOption, ctx)
-	//direct_operations.ExitSpecificUser("UCN61FE7NtU0URA_u9vWWdjw", clientOption, ctx)
+	//direct_operations.ExitSpecificUser("UCTYYfHyJLOBDiFqvfpvmUHg", clientOption, ctx)
 }

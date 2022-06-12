@@ -1,10 +1,13 @@
 package myfirestore
 
 import (
-	"app.modules/core/utils"
 	"cloud.google.com/go/firestore"
 	"context"
+	"github.com/pkg/errors"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"strconv"
 	"time"
 )
@@ -24,7 +27,7 @@ func NewFirestoreController(ctx context.Context, clientOption option.ClientOptio
 	}, nil
 }
 
-func (controller *FirestoreController) get(ctx context.Context, tx *firestore.Transaction, ref *firestore.DocumentRef) (*firestore.DocumentSnapshot, error) {
+func (c *FirestoreController) get(ctx context.Context, tx *firestore.Transaction, ref *firestore.DocumentRef) (*firestore.DocumentSnapshot, error) {
 	if tx != nil {
 		return tx.Get(ref)
 	} else {
@@ -32,7 +35,7 @@ func (controller *FirestoreController) get(ctx context.Context, tx *firestore.Tr
 	}
 }
 
-func (controller *FirestoreController) set(ctx context.Context, tx *firestore.Transaction, ref *firestore.DocumentRef, data interface{}, opts ...firestore.SetOption) error {
+func (c *FirestoreController) set(ctx context.Context, tx *firestore.Transaction, ref *firestore.DocumentRef, data interface{}, opts ...firestore.SetOption) error {
 	if tx != nil {
 		return tx.Set(ref, data, opts...)
 	} else {
@@ -41,9 +44,57 @@ func (controller *FirestoreController) set(ctx context.Context, tx *firestore.Tr
 	}
 }
 
-func (controller *FirestoreController) RetrieveCredentialsConfig(ctx context.Context, tx *firestore.Transaction) (CredentialsConfigDoc, error) {
-	ref := controller.FirestoreClient.Collection(CONFIG).Doc(CredentialsConfigDocName)
-	doc, err := controller.get(ctx, tx, ref)
+func (c *FirestoreController) update(ctx context.Context, tx *firestore.Transaction, ref *firestore.DocumentRef, data []firestore.Update, opts ...firestore.Precondition) error {
+	if tx != nil {
+		return tx.Update(ref, data, opts...)
+	} else {
+		_, err := ref.Update(ctx, data, opts...)
+		return err
+	}
+}
+
+func (c *FirestoreController) delete(ctx context.Context, tx *firestore.Transaction, ref *firestore.DocumentRef, opts ...firestore.Precondition) error {
+	if tx != nil {
+		return tx.Delete(ref, opts...)
+	} else {
+		_, err := ref.Delete(ctx, opts...)
+		return err
+	}
+}
+
+func (c *FirestoreController) configCollection() *firestore.CollectionRef {
+	return c.FirestoreClient.Collection(CONFIG)
+}
+
+func (c *FirestoreController) usersCollection() *firestore.CollectionRef {
+	return c.FirestoreClient.Collection(USERS)
+}
+
+func (c *FirestoreController) seatsCollection() *firestore.CollectionRef {
+	return c.FirestoreClient.Collection(SEATS)
+}
+
+func (c *FirestoreController) liveChatHistoryCollection() *firestore.CollectionRef {
+	return c.FirestoreClient.Collection(LiveChatHistory)
+}
+
+func (c *FirestoreController) userActivitiesCollection() *firestore.CollectionRef {
+	return c.FirestoreClient.Collection(UserActivities)
+}
+
+func (c *FirestoreController) DeleteDocRef(ctx context.Context, tx *firestore.Transaction,
+	ref *firestore.DocumentRef) error {
+	if tx != nil {
+		return tx.Delete(ref)
+	} else {
+		_, err := ref.Delete(ctx)
+		return err
+	}
+}
+
+func (c *FirestoreController) RetrieveCredentialsConfig(ctx context.Context, tx *firestore.Transaction) (CredentialsConfigDoc, error) {
+	ref := c.configCollection().Doc(CredentialsConfigDocName)
+	doc, err := c.get(ctx, tx, ref)
 	if err != nil {
 		return CredentialsConfigDoc{}, err
 	}
@@ -55,9 +106,9 @@ func (controller *FirestoreController) RetrieveCredentialsConfig(ctx context.Con
 	return credentialsData, nil
 }
 
-func (controller *FirestoreController) RetrieveSystemConstantsConfig(ctx context.Context, tx *firestore.Transaction) (ConstantsConfigDoc, error) {
-	ref := controller.FirestoreClient.Collection(CONFIG).Doc(SystemConstantsConfigDocName)
-	doc, err := controller.get(ctx, tx, ref)
+func (c *FirestoreController) RetrieveSystemConstantsConfig(ctx context.Context, tx *firestore.Transaction) (ConstantsConfigDoc, error) {
+	ref := c.configCollection().Doc(SystemConstantsConfigDocName)
+	doc, err := c.get(ctx, tx, ref)
 	if err != nil {
 		return ConstantsConfigDoc{}, err
 	}
@@ -69,135 +120,126 @@ func (controller *FirestoreController) RetrieveSystemConstantsConfig(ctx context
 	return constantsConfig, nil
 }
 
-func (controller *FirestoreController) RetrieveLiveChatId(ctx context.Context, tx *firestore.Transaction) (string, error) {
-	credentialsDoc, err := controller.RetrieveCredentialsConfig(ctx, tx)
+func (c *FirestoreController) RetrieveLiveChatId(ctx context.Context, tx *firestore.Transaction) (string, error) {
+	credentialsDoc, err := c.RetrieveCredentialsConfig(ctx, tx)
 	if err != nil {
 		return "", err
 	}
 	return credentialsDoc.YoutubeLiveChatId, nil
 }
 
-func (controller *FirestoreController) RetrieveNextPageToken(ctx context.Context, tx *firestore.Transaction) (string, error) {
-	credentialsDoc, err := controller.RetrieveCredentialsConfig(ctx, tx)
+func (c *FirestoreController) RetrieveNextPageToken(ctx context.Context, tx *firestore.Transaction) (string, error) {
+	credentialsDoc, err := c.RetrieveCredentialsConfig(ctx, tx)
 	if err != nil {
 		return "", err
 	}
 	return credentialsDoc.YoutubeLiveChatNextPageToken, nil
 }
 
-func (controller *FirestoreController) SaveNextPageToken(ctx context.Context, nextPageToken string) error {
-	ref := controller.FirestoreClient.Collection(CONFIG).Doc(CredentialsConfigDocName)
-	_, err := ref.Set(ctx, map[string]interface{}{
-		NextPageTokenFirestore: nextPageToken,
-	}, firestore.MergeAll)
+func (c *FirestoreController) SaveNextPageToken(ctx context.Context, nextPageToken string) error {
+	ref := c.configCollection().Doc(CredentialsConfigDocName)
+	_, err := ref.Update(ctx, []firestore.Update{
+		{Path: NextPageTokenDocProperty, Value: nextPageToken},
+	})
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (controller *FirestoreController) RetrieveRoom(ctx context.Context, tx *firestore.Transaction) (RoomDoc, error) {
-	roomData := NewRoomDoc()
-	ref := controller.FirestoreClient.Collection(ROOMS).Doc(DefaultRoomDocName)
-	doc, err := controller.get(ctx, tx, ref)
-	if err != nil {
-		return RoomDoc{}, err
+func (c *FirestoreController) RetrieveSeats(ctx context.Context) ([]SeatDoc, error) {
+	seats := make([]SeatDoc, 0) // jsonになったときにnullとならないように。
+	iter := c.seatsCollection().Documents(ctx)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return []SeatDoc{}, err
+		}
+		var seatDoc SeatDoc
+		err = doc.DataTo(&seatDoc)
+		if err != nil {
+			return []SeatDoc{}, err
+		}
+		seats = append(seats, seatDoc)
 	}
-	err = doc.DataTo(&roomData)
-	if err != nil {
-		return RoomDoc{}, err
-	}
-	return roomData, nil
+	return seats, nil
 }
 
-func (controller *FirestoreController) SetSeat(
-	_ context.Context,
-	tx *firestore.Transaction,
-	seatId int,
-	workName string,
-	enterDate time.Time,
-	exitDate time.Time,
-	seatColorCode string,
-	userId string,
-	userDisplayName string,
-) (Seat, error) {
-	// TODO {Path: , Val: }形式に書き直せないかな？
-	seat := Seat{
-		SeatId:          seatId,
-		UserId:          userId,
-		UserDisplayName: userDisplayName,
-		WorkName:        workName,
-		EnteredAt:       enterDate,
-		Until:           exitDate,
-		ColorCode:       seatColorCode,
-	}
-	err := tx.Set(controller.FirestoreClient.Collection(ROOMS).Doc(DefaultRoomDocName), map[string]interface{}{
-		SeatsFirestore: firestore.ArrayUnion(seat),
-	}, firestore.MergeAll)
+func (c *FirestoreController) RetrieveSeat(ctx context.Context, tx *firestore.Transaction, seatId int) (SeatDoc, error) {
+	ref := c.seatsCollection().Doc(strconv.Itoa(seatId))
+	doc, err := c.get(ctx, tx, ref)
 	if err != nil {
-		return Seat{}, err
+		return SeatDoc{}, err // NotFoundの場合もerrに含まれる
 	}
-	return seat, nil
+	var seatDoc SeatDoc
+	err = doc.DataTo(&seatDoc)
+	if err != nil {
+		return SeatDoc{}, err
+	}
+	return seatDoc, nil
 }
 
-func (controller *FirestoreController) SetLastEnteredDate(tx *firestore.Transaction, userId string, enteredDate time.Time) error {
-	err := tx.Set(controller.FirestoreClient.Collection(USERS).Doc(userId), map[string]interface{}{
-		LastEnteredFirestore: enteredDate,
-	}, firestore.MergeAll)
+func (c *FirestoreController) RetrieveSeatWithUserId(ctx context.Context, userId string) (SeatDoc, error) {
+	docs, err := c.seatsCollection().Where(UserIdDocProperty, "==", userId).Documents(ctx).GetAll()
 	if err != nil {
-		return err
+		return SeatDoc{}, err
 	}
-	return nil
+	if len(docs) >= 2 {
+		return SeatDoc{}, errors.New("There are more than two seats with the user id = " + userId + " !!")
+	}
+	if len(docs) == 1 {
+		var seatDoc SeatDoc
+		err := docs[0].DataTo(&seatDoc)
+		if err != nil {
+			return SeatDoc{}, err
+		}
+		return seatDoc, nil
+	}
+	return SeatDoc{}, status.Errorf(codes.NotFound, "%s not found", "the document with user id = "+userId)
 }
 
-func (controller *FirestoreController) SetLastExitedDate(tx *firestore.Transaction, userId string, exitedDate time.Time) error {
-	ref := controller.FirestoreClient.Collection(USERS).Doc(userId)
-	err := tx.Set(ref, map[string]interface{}{
-		LastExitedFirestore: exitedDate,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
+func (c *FirestoreController) SetLastEnteredDate(tx *firestore.Transaction, userId string, enteredDate time.Time) error {
+	ref := c.usersCollection().Doc(userId)
+	return tx.Update(ref, []firestore.Update{
+		{Path: LastEnteredDocProperty, Value: enteredDate},
+	})
 }
 
-func (controller *FirestoreController) SetMyRankVisible(_ context.Context, tx *firestore.Transaction, userId string, rankVisible bool) error {
-	err := tx.Set(controller.FirestoreClient.Collection(USERS).Doc(userId), map[string]interface{}{
-		RankVisibleFirestore: rankVisible,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
+func (c *FirestoreController) SetLastExitedDate(tx *firestore.Transaction, userId string, exitedDate time.Time) error {
+	ref := c.usersCollection().Doc(userId)
+	return tx.Update(ref, []firestore.Update{
+		{Path: LastExitedDocProperty, Value: exitedDate},
+	})
 }
 
-func (controller *FirestoreController) SetMyDefaultStudyMin(tx *firestore.Transaction, userId string, defaultStudyMin int) error {
-	err := tx.Set(controller.FirestoreClient.Collection(USERS).Doc(userId), map[string]interface{}{
-		DefaultStudyMinFirestore: defaultStudyMin,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
+func (c *FirestoreController) SetMyRankVisible(tx *firestore.Transaction, userId string,
+	rankVisible bool) error {
+	ref := c.usersCollection().Doc(userId)
+	return tx.Update(ref, []firestore.Update{
+		{Path: RankVisibleDocProperty, Value: rankVisible},
+	})
 }
 
-func (controller *FirestoreController) AddUserHistory(tx *firestore.Transaction, userId string, action string, details interface{}) error {
-	history := UserHistoryDoc{
-		Action:  action,
-		Date:    utils.JstNow(),
-		Details: details,
-	}
-	newDocRef := controller.FirestoreClient.Collection(USERS).Doc(userId).Collection(HISTORY).NewDoc()
-	err := tx.Set(newDocRef, history)
-	if err != nil {
-		return err
-	}
-	return nil
+func (c *FirestoreController) SetMyDefaultStudyMin(tx *firestore.Transaction, userId string, defaultStudyMin int) error {
+	ref := c.usersCollection().Doc(userId)
+	return tx.Update(ref, []firestore.Update{
+		{Path: DefaultStudyMinDocProperty, Value: defaultStudyMin},
+	})
 }
 
-func (controller *FirestoreController) RetrieveUser(ctx context.Context, tx *firestore.Transaction, userId string) (UserDoc, error) {
-	ref := controller.FirestoreClient.Collection(USERS).Doc(userId)
-	doc, err := controller.get(ctx, tx, ref)
+func (c *FirestoreController) SetMyFavoriteColor(tx *firestore.Transaction, userId string, colorCode string) error {
+	ref := c.usersCollection().Doc(userId)
+	return tx.Update(ref, []firestore.Update{
+		{Path: FavoriteColorDocProperty, Value: colorCode},
+	})
+}
+
+func (c *FirestoreController) RetrieveUser(ctx context.Context, tx *firestore.Transaction, userId string) (UserDoc, error) {
+	ref := c.usersCollection().Doc(userId)
+	doc, err := c.get(ctx, tx, ref)
 	if err != nil {
 		return UserDoc{}, err
 	}
@@ -209,146 +251,186 @@ func (controller *FirestoreController) RetrieveUser(ctx context.Context, tx *fir
 	return userData, nil
 }
 
-func (controller *FirestoreController) UpdateTotalTime(
+func (c *FirestoreController) UpdateTotalTime(
 	tx *firestore.Transaction,
 	userId string,
 	newTotalTimeSec int,
 	newDailyTotalTimeSec int,
 ) error {
-	ref := controller.FirestoreClient.Collection(USERS).Doc(userId)
-	err := tx.Set(ref, map[string]interface{}{
-		DailyTotalStudySecFirestore: newDailyTotalTimeSec,
-		TotalStudySecFirestore:      newTotalTimeSec,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (controller *FirestoreController) SaveLiveChatId(ctx context.Context, tx *firestore.Transaction, liveChatId string) error {
-	ref := controller.FirestoreClient.Collection(CONFIG).Doc(CredentialsConfigDocName)
-	err := controller.set(ctx, tx, ref, map[string]interface{}{
-		LiveChatIdFirestore: liveChatId,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (controller *FirestoreController) InitializeUser(tx *firestore.Transaction, userId string, userData UserDoc) error {
-	return tx.Set(controller.FirestoreClient.Collection(USERS).Doc(userId), userData)
-}
-
-func (controller *FirestoreController) RetrieveAllUserDocRefs(ctx context.Context) ([]*firestore.DocumentRef, error) {
-	return controller.FirestoreClient.Collection(USERS).DocumentRefs(ctx).GetAll()
-}
-
-func (controller *FirestoreController) RetrieveAllNonDailyZeroUserDocs(ctx context.Context) *firestore.DocumentIterator {
-	return controller.FirestoreClient.Collection(USERS).Where(DailyTotalStudySecFirestore, "!=", 0).Documents(ctx)
-}
-
-func (controller *FirestoreController) ResetDailyTotalStudyTime(ctx context.Context, userRef *firestore.DocumentRef) error {
-	//return tx.Set(userRef, map[string]interface{}{
-	//	DailyTotalStudySecFirestore: 0,
-	//}, firestore.MergeAll)
-	_, err := userRef.Set(ctx, map[string]interface{}{
-		DailyTotalStudySecFirestore: 0,
-	}, firestore.MergeAll)
-	return err
-}
-
-func (controller *FirestoreController) SetLastResetDailyTotalStudyTime(ctx context.Context, timestamp time.Time) error {
-	//return tx.Set(controller.FirestoreClient.Collection(CONFIG).Doc(SystemConstantsConfigDocName),
-	//	map[string]interface{}{
-	//	LastResetDailyTotalStudySecFirestore: timestamp,
-	//}, firestore.MergeAll)
-	_, err := controller.FirestoreClient.Collection(CONFIG).Doc(SystemConstantsConfigDocName).Set(ctx,
-		map[string]interface{}{
-			LastResetDailyTotalStudySecFirestore: timestamp,
-		}, firestore.MergeAll)
-	return err
-}
-
-func (controller *FirestoreController) SetLastTransferLiveChatHistoryBigquery(ctx context.Context,
-	timestamp time.Time) error {
-	//return tx.Set(controller.FirestoreClient.Collection(CONFIG).Doc(SystemConstantsConfigDocName),
-	//	map[string]interface{}{
-	//	LastTransferLiveChatHistoryBigquery: timestamp,
-	//}, firestore.MergeAll)
-	_, err := controller.FirestoreClient.Collection(CONFIG).Doc(SystemConstantsConfigDocName).Set(ctx,
-		map[string]interface{}{
-			LastTransferLiveChatHistoryBigquery: timestamp,
-		}, firestore.MergeAll)
-	return err
-}
-
-func (controller *FirestoreController) SetDesiredMaxSeats(tx *firestore.Transaction, desiredMaxSeats int) error {
-	err := tx.Set(controller.FirestoreClient.Collection(CONFIG).Doc(SystemConstantsConfigDocName), map[string]interface{}{
-		DesiredMaxSeatsFirestore: desiredMaxSeats,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (controller *FirestoreController) SetMaxSeats(tx *firestore.Transaction, maxSeats int) error {
-	err := tx.Set(controller.FirestoreClient.Collection(CONFIG).Doc(SystemConstantsConfigDocName), map[string]interface{}{
-		MaxSeatsFirestore: maxSeats,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (controller *FirestoreController) SetAccessTokenOfChannelCredential(tx *firestore.Transaction, accessToken string, expireDate time.Time) error {
-	err := tx.Set(controller.FirestoreClient.Collection(CONFIG).Doc(CredentialsConfigDocName), map[string]interface{}{
-		YoutubeChannelAccessTokenFirestore: accessToken,
-		YoutubeChannelExpirationDate:       expireDate,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (controller *FirestoreController) SetAccessTokenOfBotCredential(ctx context.Context, tx *firestore.Transaction, accessToken string, expireDate time.Time) error {
-	ref := controller.FirestoreClient.Collection(CONFIG).Doc(CredentialsConfigDocName)
-	err := controller.set(ctx, tx, ref, map[string]interface{}{
-		YoutubeBotAccessTokenFirestore:    accessToken,
-		YoutubeBotExpirationDateFirestore: expireDate,
-	}, firestore.MergeAll)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (controller *FirestoreController) UpdateSeats(tx *firestore.Transaction, seats []Seat) error {
-	ref := controller.FirestoreClient.Collection(ROOMS).Doc(DefaultRoomDocName)
+	ref := c.usersCollection().Doc(userId)
 	return tx.Update(ref, []firestore.Update{
-		{Path: SeatsFirestore, Value: seats},
+		{Path: DailyTotalStudySecDocProperty, Value: newDailyTotalTimeSec},
+		{Path: TotalStudySecDocProperty, Value: newTotalTimeSec},
 	})
 }
 
-func (controller *FirestoreController) AddLiveChatHistoryDoc(ctx context.Context, tx *firestore.Transaction,
-	liveChatHistoryDoc LiveChatHistoryDoc) error {
-	docId := "live-chat_" + liveChatHistoryDoc.PublishedAt.Format("2006-01-02_15-04-05_") + strconv.Itoa(liveChatHistoryDoc.PublishedAt.Nanosecond())
-	ref := controller.FirestoreClient.Collection(LiveChatHistory).Doc(docId)
-	return controller.set(ctx, tx, ref, liveChatHistoryDoc)
+func (c *FirestoreController) UpdateUserRankPoint(tx *firestore.Transaction, userId string, rp int) error {
+	ref := c.usersCollection().Doc(userId)
+	return tx.Update(ref, []firestore.Update{
+		{Path: RankPointDocProperty, Value: rp},
+	})
 }
 
-func (controller *FirestoreController) RetrieveAllLiveChatHistoryDocIdsBeforeDate(ctx context.Context,
+func (c *FirestoreController) SaveLiveChatId(ctx context.Context, tx *firestore.Transaction, liveChatId string) error {
+	ref := c.configCollection().Doc(CredentialsConfigDocName)
+	return c.update(ctx, tx, ref, []firestore.Update{
+		{Path: LiveChatIdDocProperty, Value: liveChatId},
+	})
+}
+
+func (c *FirestoreController) InitializeUser(tx *firestore.Transaction, userId string, userData UserDoc) error {
+	ref := c.usersCollection().Doc(userId)
+	return c.set(nil, tx, ref, userData)
+}
+
+func (c *FirestoreController) RetrieveAllUserDocRefs(ctx context.Context) ([]*firestore.DocumentRef, error) {
+	return c.usersCollection().DocumentRefs(ctx).GetAll()
+}
+
+func (c *FirestoreController) RetrieveAllNonDailyZeroUserDocs(ctx context.Context) *firestore.DocumentIterator {
+	return c.usersCollection().Where(DailyTotalStudySecDocProperty, "!=", 0).Documents(ctx)
+}
+
+func (c *FirestoreController) ResetDailyTotalStudyTime(ctx context.Context, userRef *firestore.DocumentRef) error {
+	_, err := userRef.Update(ctx, []firestore.Update{
+		{Path: DailyTotalStudySecDocProperty, Value: 0},
+	})
+	return err
+}
+
+func (c *FirestoreController) SetLastResetDailyTotalStudyTime(ctx context.Context, timestamp time.Time) error {
+	ref := c.configCollection().Doc(SystemConstantsConfigDocName)
+	_, err := ref.Update(ctx, []firestore.Update{
+		{Path: LastResetDailyTotalStudySecDocProperty, Value: timestamp},
+	})
+	return err
+}
+
+func (c *FirestoreController) SetLastLongTimeSittingChecked(ctx context.Context, timestamp time.Time) error {
+	ref := c.configCollection().Doc(SystemConstantsConfigDocName)
+	_, err := ref.Update(ctx, []firestore.Update{
+		{Path: LastLongTimeSittingCheckedDocProperty, Value: timestamp},
+	})
+	return err
+}
+
+func (c *FirestoreController) SetLastTransferCollectionHistoryBigquery(ctx context.Context,
+	timestamp time.Time) error {
+	ref := c.configCollection().Doc(SystemConstantsConfigDocName)
+	_, err := ref.Update(ctx, []firestore.Update{
+		{Path: LastTransferCollectionHistoryBigqueryDocProperty, Value: timestamp},
+	})
+	return err
+}
+
+func (c *FirestoreController) SetDesiredMaxSeats(ctx context.Context, tx *firestore.Transaction,
+	desiredMaxSeats int) error {
+	ref := c.configCollection().Doc(SystemConstantsConfigDocName)
+	return c.update(ctx, tx, ref, []firestore.Update{
+		{Path: DesiredMaxSeatsDocProperty, Value: desiredMaxSeats},
+	})
+}
+
+func (c *FirestoreController) SetMaxSeats(ctx context.Context, tx *firestore.Transaction, maxSeats int) error {
+	ref := c.configCollection().Doc(SystemConstantsConfigDocName)
+	return c.update(ctx, tx, ref, []firestore.Update{
+		{Path: MaxSeatsDocProperty, Value: maxSeats},
+	})
+}
+
+func (c *FirestoreController) SetAccessTokenOfChannelCredential(tx *firestore.Transaction, accessToken string, expireDate time.Time) error {
+	ref := c.configCollection().Doc(CredentialsConfigDocName)
+	return c.update(nil, tx, ref, []firestore.Update{
+		{Path: YoutubeChannelAccessTokenDocProperty, Value: accessToken},
+		{Path: YoutubeChannelExpirationDate, Value: expireDate},
+	})
+}
+
+func (c *FirestoreController) SetAccessTokenOfBotCredential(ctx context.Context, tx *firestore.Transaction, accessToken string, expireDate time.Time) error {
+	ref := c.configCollection().Doc(CredentialsConfigDocName)
+	return c.update(ctx, tx, ref, []firestore.Update{
+		{Path: YoutubeBotAccessTokenDocProperty, Value: accessToken},
+		{Path: YoutubeBotExpirationDateDocProperty, Value: expireDate},
+	})
+}
+
+func (c *FirestoreController) AddSeat(tx *firestore.Transaction, seat SeatDoc) error {
+	ref := c.seatsCollection().Doc(strconv.Itoa(seat.SeatId))
+	return tx.Create(ref, seat)
+}
+
+func (c *FirestoreController) UpdateSeat(tx *firestore.Transaction, seat SeatDoc) error {
+	ref := c.seatsCollection().Doc(strconv.Itoa(seat.SeatId))
+	return c.set(nil, tx, ref, seat)
+}
+
+func (c *FirestoreController) RemoveSeat(tx *firestore.Transaction, seatId int) error {
+	ref := c.seatsCollection().Doc(strconv.Itoa(seatId))
+	return c.delete(nil, tx, ref)
+}
+
+func (c *FirestoreController) AddLiveChatHistoryDoc(ctx context.Context, tx *firestore.Transaction,
+	liveChatHistoryDoc LiveChatHistoryDoc) error {
+	ref := c.liveChatHistoryCollection().NewDoc()
+	return c.set(ctx, tx, ref, liveChatHistoryDoc)
+}
+
+func (c *FirestoreController) Retrieve500LiveChatHistoryDocIdsBeforeDate(ctx context.Context,
 	date time.Time,
 ) *firestore.DocumentIterator {
-	return controller.FirestoreClient.Collection(LiveChatHistory).Where(PublishedAtDocName, "<", date).Documents(ctx)
+	return c.liveChatHistoryCollection().Where(PublishedAtDocProperty, "<",
+		date).Limit(FirestoreWritesLimitPerRequest).Documents(ctx)
 }
 
-func (controller *FirestoreController) DeleteLiveChatHistoryDoc(tx *firestore.Transaction, docId string) error {
-	// TODO: 時間かかりそう。txじゃないほうがいい？
-	ref := controller.FirestoreClient.Collection(LiveChatHistory).Doc(docId)
-	return tx.Delete(ref)
+func (c *FirestoreController) AddUserActivityDoc(tx *firestore.Transaction, activity UserActivityDoc) error {
+	ref := c.userActivitiesCollection().NewDoc()
+	return c.set(nil, tx, ref, activity)
+}
+
+func (c *FirestoreController) Retrieve500UserActivityDocIdsBeforeDate(ctx context.Context,
+	date time.Time,
+) *firestore.DocumentIterator {
+	return c.userActivitiesCollection().Where(TakenAtDocProperty, "<",
+		date).Limit(FirestoreWritesLimitPerRequest).Documents(ctx)
+}
+
+func (c *FirestoreController) RetrieveAllUserActivityDocIdsAfterDate(ctx context.Context, date time.Time,
+) *firestore.DocumentIterator {
+	return c.userActivitiesCollection().Where(TakenAtDocProperty, ">=", date).Documents(ctx)
+}
+
+func (c *FirestoreController) RetrieveAllUserActivityDocIdsAfterDateForUserAndSeat(ctx context.Context,
+	date time.Time, userId string, seatId int) *firestore.DocumentIterator {
+	return c.userActivitiesCollection().Where(TakenAtDocProperty, ">=",
+		date).Where(UserIdDocProperty, "==", userId).Where(SeatIdDocProperty, "==", seatId).OrderBy(TakenAtDocProperty,
+		firestore.Asc).Documents(ctx)
+}
+
+func (c *FirestoreController) RetrieveUsersActiveAfterDate(ctx context.Context, date time.Time) *firestore.DocumentIterator {
+	return c.usersCollection().Where(LastExitedDocProperty, ">=", date).Documents(ctx)
+}
+
+func (c *FirestoreController) UpdateUserIsContinuousActiveAndCurrentActivityStateStarted(
+	tx *firestore.Transaction, userId string, isContinuousActive bool, currentActivityStateStarted time.Time) error {
+	ref := c.usersCollection().Doc(userId)
+	return c.update(nil, tx, ref, []firestore.Update{
+		{Path: IsContinuousActiveDocProperty, Value: isContinuousActive},
+		{Path: CurrentActivityStateStartedDocProperty, Value: currentActivityStateStarted},
+	})
+}
+
+func (c *FirestoreController) UpdateUserLastPenaltyImposedDays(tx *firestore.Transaction, userId string, lastPenaltyImposedDays int) error {
+	ref := c.usersCollection().Doc(userId)
+	return c.update(nil, tx, ref, []firestore.Update{
+		{Path: LastPenaltyImposedDaysDocProperty, Value: lastPenaltyImposedDays},
+	})
+}
+
+func (c *FirestoreController) UpdateUserRPAndLastPenaltyImposedDays(tx *firestore.Transaction, userId string,
+	newRP int, newLastPenaltyImposedDays int) error {
+	ref := c.usersCollection().Doc(userId)
+	return c.update(nil, tx, ref, []firestore.Update{
+		{Path: RankPointDocProperty, Value: newRP},
+		{Path: LastPenaltyImposedDaysDocProperty, Value: newLastPenaltyImposedDays},
+	})
 }

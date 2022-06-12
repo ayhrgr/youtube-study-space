@@ -2,11 +2,11 @@ package core
 
 import (
 	"app.modules/core/myfirestore"
+	"app.modules/core/utils"
 	"context"
-	"github.com/joho/godotenv"
+	"github.com/pkg/errors"
 	"google.golang.org/api/option"
 	"google.golang.org/api/transport"
-	"log"
 	"strings"
 	"time"
 )
@@ -38,6 +38,13 @@ func HasTimeOptionPrefix(str string) bool {
 		strings.HasPrefix(str, TimeOptionShortPrefixLegacy)
 }
 
+func IsEmptyTimeOption(str string) bool {
+	return str == TimeOptionPrefix ||
+		str == TimeOptionShortPrefix ||
+		str == TimeOptionPrefixLegacy ||
+		str == TimeOptionShortPrefixLegacy
+}
+
 func TrimTimeOptionPrefix(str string) string {
 	if strings.HasPrefix(str, TimeOptionPrefix) {
 		return strings.TrimPrefix(str, TimeOptionPrefix)
@@ -51,90 +58,13 @@ func TrimTimeOptionPrefix(str string) string {
 	return str
 }
 
-func CreateUpdatedSeatsSeatWorkName(seats []myfirestore.Seat, workName string, userId string) []myfirestore.Seat {
-	for i, seat := range seats {
+func GetSeatByUserId(seats []myfirestore.SeatDoc, userId string) (myfirestore.SeatDoc, error) {
+	for _, seat := range seats {
 		if seat.UserId == userId {
-			seats[i].WorkName = workName
-			break
+			return seat, nil
 		}
 	}
-	return seats
-}
-
-func CreateUpdatedSeatsSeatBreakWorkName(seats []myfirestore.Seat, breakWorkName string, userId string) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].BreakWorkName = breakWorkName
-			break
-		}
-	}
-	return seats
-}
-
-func CreateUpdatedSeatsSeatColorCode(seats []myfirestore.Seat, colorCode string, userId string) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].ColorCode = colorCode
-			break
-		}
-	}
-	return seats
-}
-
-func CreateUpdatedSeatsSeatUntil(seats []myfirestore.Seat, newUntil time.Time, userId string) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].Until = newUntil
-			break
-		}
-	}
-	return seats
-}
-
-func CreateUpdatedSeatsSeatCurrentStateUntil(seats []myfirestore.Seat, newUntil time.Time,
-	userId string) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].CurrentStateUntil = newUntil
-			break
-		}
-	}
-	return seats
-}
-
-func CreateUpdatedSeatsSeatState(seats []myfirestore.Seat, userId string, state myfirestore.SeatState,
-	currentStateStartedAt time.Time, currentStateUntil time.Time, cumulativeWorkSec int, dailyCumulativeWorkSec int,
-	workName string,
-) []myfirestore.Seat {
-	for i, seat := range seats {
-		if seat.UserId == userId {
-			seats[i].State = state
-			seats[i].CurrentStateStartedAt = currentStateStartedAt
-			seats[i].CurrentStateUntil = currentStateUntil
-			seats[i].CumulativeWorkSec = cumulativeWorkSec
-			seats[i].DailyCumulativeWorkSec = dailyCumulativeWorkSec
-			switch state {
-			case myfirestore.BreakState:
-				seats[i].BreakWorkName = workName
-			case myfirestore.WorkState:
-				seats[i].WorkName = workName
-			}
-			break
-		}
-	}
-	return seats
-}
-
-func LoadEnv() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println(err)
-		err = godotenv.Load("../.env")
-		if err != nil {
-			log.Println(err.Error())
-			log.Fatal("Error loading .env file")
-		}
-	}
+	return myfirestore.SeatDoc{}, errors.New("no seat found with user id = " + userId)
 }
 
 func GetGcpProjectId(ctx context.Context, clientOption option.ClientOption) (string, error) {
@@ -143,4 +73,51 @@ func GetGcpProjectId(ctx context.Context, clientOption option.ClientOption) (str
 		return "", err
 	}
 	return creds.ProjectID, nil
+}
+
+func contains(s []int, e int) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
+func RealTimeTotalStudyDurationOfSeat(seat myfirestore.SeatDoc) (time.Duration, error) {
+	jstNow := utils.JstNow()
+	var duration time.Duration
+	switch seat.State {
+	case myfirestore.WorkState:
+		duration = time.Duration(seat.CumulativeWorkSec)*time.Second + utils.NoNegativeDuration(jstNow.Sub(seat.CurrentStateStartedAt))
+	case myfirestore.BreakState:
+		duration = time.Duration(seat.CumulativeWorkSec) * time.Second
+	default:
+		return 0, errors.New("unknown seat.State: " + string(seat.State))
+	}
+	return duration, nil
+}
+
+func RealTimeDailyTotalStudyDurationOfSeat(seat myfirestore.SeatDoc) (time.Duration, error) {
+	jstNow := utils.JstNow()
+	var duration time.Duration
+	// 今のstateになってから日付が変っている可能性
+	if utils.DateEqual(seat.CurrentStateStartedAt, jstNow) { // 日付変わってない
+		switch seat.State {
+		case myfirestore.WorkState:
+			duration = time.Duration(seat.DailyCumulativeWorkSec)*time.Second + utils.NoNegativeDuration(jstNow.Sub(seat.CurrentStateStartedAt))
+		case myfirestore.BreakState:
+			duration = time.Duration(seat.DailyCumulativeWorkSec) * time.Second
+		default:
+			return 0, errors.New("unknown seat.State: " + string(seat.State))
+		}
+	} else { // 日付変わってる
+		switch seat.State {
+		case myfirestore.WorkState:
+			duration = time.Duration(utils.SecondsOfDay(jstNow)) * time.Second
+		case myfirestore.BreakState:
+			duration = time.Duration(0)
+		}
+	}
+	return duration, nil
 }
