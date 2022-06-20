@@ -1,0 +1,447 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: "youtube-study-space AWS template."
+
+Mappings:
+    Constants:
+        FunctionNames:
+            RoomsState: "cfn-rooms-state"
+            ResetDailyTotalStudyTime: "cfn-reset-daily-total-study-time"
+            SetDesiredMaxSeats: "cfn-set-desired-max-seats"
+            TransferLiveChatHistoryBigquery: "cfn-transfer-live-chat-history-bigquery"
+            YoutubeOrganizeDatabase: "cfn-youtube-organize-database"
+        RoleNames:
+            DefaultLambdaFunction: "default-lambda-function-role"
+        Api:
+            ApiName: "cfn-youtube-study-space-rest-api"
+
+Metadata:
+    Generator: "former2"
+
+
+
+Resources:
+    IAMManagedPolicy:
+        Type: "AWS::IAM::ManagedPolicy"
+        Properties:
+            ManagedPolicyName: "AWSLambdaBasicExecutionRole-"
+            Path: "/service-role/"
+            PolicyDocument: !Sub |
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": "logs:CreateLogGroup",
+                            "Resource": "arn:aws:logs:ap-northeast-1:${AWS::AccountId}:*"
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "logs:CreateLogStream",
+                                "logs:PutLogEvents"
+                            ],
+                            "Resource": [
+                                "arn:aws:logs:ap-northeast-1:${AWS::AccountId}:log-group:/aws/lambda/my-first-golang-lambda-function:*"
+                            ]
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "iam:PassRole"
+                            ],
+                            "Resource": [
+                                "arn:aws:iam::${AWS::AccountId}:role/service-role/${IAMRole}"
+                            ]
+                        }
+                    ]
+                }
+
+    DefaultLambdaIAMRole:
+        Type: AWS::IAM::Role
+        Properties:
+            RoleName: !FindInMap [ Constants, RoleNames, DefaultLambdaFunction ]
+            AssumeRolePolicyDocument:
+                Version: 2012-10-17
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                          Service:
+                            - lambda.amazonaws.com
+                      Action:
+                        - sts:AssumeRole
+            Policies:
+                - PolicyName: "default-lambda-policy"
+                  PolicyDocument:
+                      Version: 2012-10-17
+                      Statement:
+                          - Effect: Allow
+                            Action: "logs:CreateLogGroup"
+                            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+                          - Effect: Allow
+                            Action: [
+                                "logs:CreateLogStream",
+                                "logs:PutLogEvents"
+                            ]
+                            Resource: [
+                                !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                            ]
+                          - Effect: "Allow"
+                            Action: [
+                                "iam:PassRole"
+                            ]
+                            Resource: [
+                                !Sub "arn:aws:iam::${AWS::AccountId}:role/service-role/${IAMRole}"
+                            ]
+
+    RoomsStateFunction:
+        Type: AWS::Lambda::Function
+        Properties:
+            Description: ""
+            FunctionName: !FindInMap [Constants, FunctionNames, RoomsState]
+            Code: # TODO
+            Handler: "main"
+            Architectures: 
+              - "x86_64"
+            MemorySize: 128
+            Role: !GetAtt IAMRole.Arn
+            Runtime: go1.x
+            Timeout: 10
+            TracingConfig: 
+                Mode: "PassThrough"
+            EphemeralStorage: 
+                Size: 512
+
+    ApiGatewayRestApi:
+        Type: "AWS::ApiGateway::RestApi"
+        Properties:
+            Name: "youtube-study-space-rest-api"
+            ApiKeySourceType: "HEADER"
+            EndpointConfiguration: 
+                Types: 
+                  - "REGIONAL"
+
+    ApiGatewayMethod:
+        Type: "AWS::ApiGateway::Method"
+        Properties:
+            RestApiId: !Ref ApiGatewayRestApi
+            ResourceId: ""
+            HttpMethod: "GET"
+            AuthorizationType: "NONE"
+            ApiKeyRequired: true
+            MethodResponses: 
+              - 
+                ResponseModels: 
+                    "application/json": "Empty"
+                ResponseParameters: 
+                    "method.response.header.Access-Control-Allow-Origin": false
+                StatusCode: "200"
+            Integration: 
+                CacheNamespace: ""
+                ContentHandling: "CONVERT_TO_TEXT"
+                IntegrationHttpMethod: "POST"
+                IntegrationResponses: 
+                  - 
+                    ResponseParameters: 
+                        "method.response.header.Access-Control-Allow-Origin": "'*'"
+                    ResponseTemplates: {}
+                    StatusCode: "200"
+                PassthroughBehavior: "WHEN_NO_MATCH"
+                TimeoutInMillis: 29000
+                Type: "AWS"
+                Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction}/invocations"
+
+    ApiGatewayMethod2:
+        Type: "AWS::ApiGateway::Method"
+        Properties:
+            RestApiId: !Ref ApiGatewayRestApi
+            ResourceId: ""
+            HttpMethod: "POST"
+            AuthorizationType: "NONE"
+            ApiKeyRequired: true
+            MethodResponses: 
+              - 
+                ResponseModels: 
+                    "application/json": "Empty"
+                ResponseParameters: 
+                    "method.response.header.Access-Control-Allow-Origin": false
+                StatusCode: "200"
+            Integration: 
+                CacheNamespace: ""
+                ContentHandling: "CONVERT_TO_TEXT"
+                IntegrationHttpMethod: "POST"
+                IntegrationResponses: 
+                  - 
+                    ResponseParameters: 
+                        "method.response.header.Access-Control-Allow-Origin": "'*'"
+                    ResponseTemplates: {}
+                    StatusCode: "200"
+                PassthroughBehavior: "WHEN_NO_MATCH"
+                TimeoutInMillis: 29000
+                Type: "AWS"
+                Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction5}/invocations"
+
+    ApiGatewayMethod3:
+        Type: "AWS::ApiGateway::Method"
+        Properties:
+            RestApiId: !Ref ApiGatewayRestApi
+            ResourceId: ""
+            HttpMethod: "OPTIONS"
+            AuthorizationType: "NONE"
+            ApiKeyRequired: false
+            RequestParameters: {}
+            MethodResponses: 
+              - 
+                ResponseModels: 
+                    "application/json": "Empty"
+                ResponseParameters: 
+                    "method.response.header.Access-Control-Allow-Headers": false
+                    "method.response.header.Access-Control-Allow-Methods": false
+                    "method.response.header.Access-Control-Allow-Origin": false
+                StatusCode: "200"
+            Integration: 
+                CacheNamespace: ""
+                IntegrationResponses: 
+                  - 
+                    ResponseParameters: 
+                        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                        "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,POST'"
+                        "method.response.header.Access-Control-Allow-Origin": "'*'"
+                    ResponseTemplates: {}
+                    StatusCode: "200"
+                PassthroughBehavior: "WHEN_NO_MATCH"
+                RequestTemplates: 
+                    "application/json": "{\"statusCode\": 200}"
+                TimeoutInMillis: 29000
+                Type: "MOCK"
+
+    ApiGatewayMethod4:
+        Type: "AWS::ApiGateway::Method"
+        Properties:
+            RestApiId: !Ref ApiGatewayRestApi
+            ResourceId: ""
+            HttpMethod: "OPTIONS"
+            AuthorizationType: "NONE"
+            ApiKeyRequired: false
+            RequestParameters: {}
+            MethodResponses: 
+              - 
+                ResponseModels: 
+                    "application/json": "Empty"
+                ResponseParameters: 
+                    "method.response.header.Access-Control-Allow-Headers": false
+                    "method.response.header.Access-Control-Allow-Methods": false
+                    "method.response.header.Access-Control-Allow-Origin": false
+                StatusCode: "200"
+            Integration: 
+                CacheNamespace: ""
+                IntegrationResponses: 
+                  - 
+                    ResponseParameters: 
+                        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                        "method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS'"
+                        "method.response.header.Access-Control-Allow-Origin": "'*'"
+                    ResponseTemplates: {}
+                    StatusCode: "200"
+                PassthroughBehavior: "WHEN_NO_MATCH"
+                RequestTemplates: 
+                    "application/json": "{\"statusCode\": 200}"
+                TimeoutInMillis: 29000
+                Type: "MOCK"
+
+    DynamoDBTable:
+        Type: "AWS::DynamoDB::Table"
+        Properties:
+            AttributeDefinitions: 
+              - 
+                AttributeName: "secret_name"
+                AttributeType: "S"
+            TableName: "secrets"
+            KeySchema: 
+              - 
+                AttributeName: "secret_name"
+                KeyType: "HASH"
+            ProvisionedThroughput: 
+                ReadCapacityUnits: 1
+                WriteCapacityUnits: 1
+
+    IAMRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+            Path: "/service-role/"
+            RoleName: ""
+            AssumeRolePolicyDocument: "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+            MaxSessionDuration: 3600
+            ManagedPolicyArns: 
+              - "arn:aws:iam::aws:policy/PowerUserAccess"
+              - !Sub "arn:aws:iam::${AWS::AccountId}:policy/service-role/AWSLambdaBasicExecutionRole-"
+
+    LambdaFunction2:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            FunctionName: "daily_organize_database"
+            Handler: "main"
+            Architectures: 
+              - "x86_64"
+            Code: 
+            MemorySize: 128
+            Role: !GetAtt IAMRole.Arn
+            Runtime: "go1.x"
+            Timeout: 120
+            TracingConfig: 
+                Mode: "PassThrough"
+            EphemeralStorage: 
+                Size: 512
+
+    LambdaFunction3:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            FunctionName: "transfer_collection_history_bigquery"
+            Handler: "main"
+            Architectures: 
+              - "x86_64"
+            Code: 
+            MemorySize: 128
+            Role: !GetAtt IAMRole.Arn
+            Runtime: "go1.x"
+            Timeout: 140
+            TracingConfig: 
+                Mode: "PassThrough"
+            EphemeralStorage: 
+                Size: 512
+
+    LambdaFunction4:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            FunctionName: "check_live_stream_status"
+            Handler: "main"
+            Architectures: 
+              - "x86_64"
+            Code: 
+            MemorySize: 128
+            Role: !GetAtt IAMRole.Arn
+            Runtime: "go1.x"
+            Timeout: 10
+            TracingConfig: 
+                Mode: "PassThrough"
+            EphemeralStorage: 
+                Size: 512
+
+    LambdaFunction5:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            FunctionName: "set_desired_max_seats"
+            Handler: "main"
+            Architectures: 
+              - "x86_64"
+            Code: 
+            MemorySize: 128
+            Role: !GetAtt IAMRole.Arn
+            Runtime: "go1.x"
+            Timeout: 20
+            TracingConfig: 
+                Mode: "PassThrough"
+            EphemeralStorage: 
+                Size: 512
+
+    LambdaFunction6:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            FunctionName: "youtube_organize_database"
+            Handler: "main"
+            Architectures: 
+              - "x86_64"
+            Code: 
+            MemorySize: 128
+            Role: !GetAtt IAMRole.Arn
+            Runtime: "go1.x"
+            Timeout: 50
+            TracingConfig: 
+                Mode: "PassThrough"
+            EphemeralStorage: 
+                Size: 512
+
+    LambdaPermission:
+        Type: "AWS::Lambda::Permission"
+        Properties:
+            Action: "lambda:InvokeFunction"
+            FunctionName: !GetAtt LambdaFunction.Arn
+            Principal: "apigateway.amazonaws.com"
+            SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/GET/${LambdaFunction}"
+
+    LambdaPermission2:
+        Type: "AWS::Lambda::Permission"
+        Properties:
+            Action: "lambda:InvokeFunction"
+            FunctionName: !GetAtt LambdaFunction2.Arn
+            Principal: "events.amazonaws.com"
+            SourceArn: !GetAtt EventsRule.Arn
+
+    LambdaPermission3:
+        Type: "AWS::Lambda::Permission"
+        Properties:
+            Action: "lambda:InvokeFunction"
+            FunctionName: !GetAtt LambdaFunction3.Arn
+            Principal: "events.amazonaws.com"
+            SourceArn: !GetAtt EventsRule3.Arn
+
+    LambdaPermission4:
+        Type: "AWS::Lambda::Permission"
+        Properties:
+            Action: "lambda:InvokeFunction"
+            FunctionName: !GetAtt LambdaFunction5.Arn
+            Principal: "apigateway.amazonaws.com"
+            SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/POST/${LambdaFunction5}"
+
+    LambdaPermission5:
+        Type: "AWS::Lambda::Permission"
+        Properties:
+            Action: "lambda:InvokeFunction"
+            FunctionName: !GetAtt LambdaFunction6.Arn
+            Principal: "events.amazonaws.com"
+            SourceArn: !GetAtt EventsRule2.Arn
+
+    EventsRule:
+        Type: "AWS::Events::Rule"
+        Properties:
+            Name: "daily0am"
+            Description: "00:00 JST (15:00 UTC)"
+            ScheduleExpression: "cron(0 15 * * ? *)"
+            State: "ENABLED"
+            Targets: 
+              - 
+                Arn: !GetAtt LambdaFunction2.Arn
+                Id: ""
+            EventBusName: "default"
+
+    EventsRule2:
+        Type: "AWS::Events::Rule"
+        Properties:
+            Name: "1minute"
+            Description: "every minute."
+            ScheduleExpression: "rate(1 minute)"
+            State: "ENABLED"
+            Targets: 
+              - 
+                Arn: !GetAtt LambdaFunction6.Arn
+                Id: ""
+            EventBusName: "default"
+
+    EventsRule3:
+        Type: "AWS::Events::Rule"
+        Properties:
+            Name: "daily1am-JST"
+            Description: "01:00 JST"
+            ScheduleExpression: "cron(0 16 * * ? *)"
+            State: "ENABLED"
+            Targets: 
+              - 
+                Arn: !GetAtt LambdaFunction3.Arn
+                Id: ""
+            EventBusName: "default"
+

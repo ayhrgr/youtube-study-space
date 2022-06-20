@@ -1,20 +1,9 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: "Lambda and Api gateway settings"
 
-Mappings:
-  Constants:
-    FunctionNames:
-      RoomsState: "rooms_state"
-      ResetDailyTotalStudyTime: "reset_daily_total_study_time"
-      SetDesiredMaxSeats: "set_desired_max_seats"
-      TransferLiveChatHistoryBigquery: "transfer_live_chat_history_bigquery"
-      YoutubeOrganizeDatabase: "youtube_organize_database"
-    Api:
-      ApiName: "youtube-study-space-rest-api"
 
 
 Resources:
-  # Lambda実行用IAMロール
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -23,7 +12,7 @@ Resources:
         Statement:
           -
             Effect: "Allow"
-            Principal:  # 誰に権限を与えるのか
+            Principal:
               Service:
                 - "lambda.amazonaws.com"
             Action:
@@ -32,18 +21,7 @@ Resources:
         - "" # TODO
       RoleName: "" # TODO
 
-  # Lambda関数
-  RoomsStateFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      Code: # TODO
-      Description: "rooms_state function"
-      FunctionName: !FindInMap [Constants, FunctionNames, RoomsState]
-      Handler: # TODO
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: go1.x
 
-  # Api gateway
   Api:
     Type: "AWS::ApiGateway::RestApi"
     Properties:
